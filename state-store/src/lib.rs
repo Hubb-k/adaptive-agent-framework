@@ -262,21 +262,20 @@ mod tests {
         file.write_all(MAGIC).unwrap();
         file.write_all(&VERSION.to_le_bytes()).unwrap();
 
-        file.write_all(&0u64.to_le_bytes()).unwrap(); 
-        file.write_all(&0.5f64.to_le_bytes()).unwrap(); 
-        file.write_all(&0.1f64.to_le_bytes()).unwrap(); 
-        file.write_all(&0.0f64.to_le_bytes()).unwrap(); 
-        file.write_all(&1.0f64.to_le_bytes()).unwrap(); 
-        file.write_all(&0.0f64.to_le_bytes()).unwrap(); 
-        file.write_all(&0u64.to_le_bytes()).unwrap(); 
+        file.write_all(&0u64.to_le_bytes()).unwrap();
+        file.write_all(&0.5f64.to_le_bytes()).unwrap();
+        file.write_all(&0.1f64.to_le_bytes()).unwrap();
+        file.write_all(&0.0f64.to_le_bytes()).unwrap();
+        file.write_all(&1.0f64.to_le_bytes()).unwrap();
+        file.write_all(&0.0f64.to_le_bytes()).unwrap();
+        file.write_all(&0u64.to_le_bytes()).unwrap();
 
-        file.write_all(&1u32.to_le_bytes()).unwrap(); 
+        file.write_all(&1u32.to_le_bytes()).unwrap();
         file.write_all(&[TAG_SETPOINT]).unwrap();
         file.write_all(&8u32.to_le_bytes()).unwrap();
         file.write_all(&0.5f64.to_le_bytes()).unwrap();
 
-        
-        file.write_all(&[0x99]).unwrap(); 
+        file.write_all(&[0x99]).unwrap();
         file.write_all(&4u32.to_le_bytes()).unwrap();
         file.write_all(&[0u8; 4]).unwrap();
 

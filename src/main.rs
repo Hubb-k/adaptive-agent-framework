@@ -101,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if last_lines > 0 {
                 print!("\x1B[{}A", last_lines);
             }
-            print!("\x1B[J"); 
+            print!("\x1B[J");
 
             println!("=== CORE SIMULATION MONITOR ===");
             println!("Tick: {:<6} | Align: {:.3} | Inertia: {:.3} | Pop: {:>2} | Hits: {:>4} | Reward: {:.3}",
@@ -120,11 +120,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 state.accumulated_reward
             );
 
-            last_lines = 3; 
+            last_lines = 3;
         }
     }
 
-    print!("\x1B[?25h"); 
+    print!("\x1B[?25h");
     println!("\n[✓] Симуляция завершена. Лог: {}", log_path);
     println!(
         "Итого тиков: {} | Успешных: {} | Финальный alignment: {:.3}",
