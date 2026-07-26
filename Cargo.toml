@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = ["math-core", "state-store", "agent-core", "config-layer"]
+
+[workspace.dependencies]
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+rayon = "1.8"
+
+[package]
+name = "adaptive-agent-framework"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+math-core = { path = "math-core" }
+state-store = { path = "state-store" }
+agent-core = { path = "agent-core" }
+config-layer = { path = "config-layer" }
+rand = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true }
+serde_json = "1.0"
+
+[[example]]
+name = "grid_stability"
+path = "examples/grid_stability.rs"
+
+[[example]]
+name = "viral_campaign"
+path = "examples/viral_campaign.rs"
+
+[dev-dependencies]
+criterion = "0.5"
+agent-core = { path = "agent-core" }
+
+[[bench]]
+name = "population_benchmark"
+harness = false

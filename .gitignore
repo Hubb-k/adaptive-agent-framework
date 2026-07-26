@@ -1,0 +1,13 @@
+/target/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.log
+*.bin
+examples/*.json
+tools/*.html
+Cargo.lock

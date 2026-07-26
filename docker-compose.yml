@@ -1,0 +1,10 @@
+version: "3.8"
+
+services:
+  grid-stability:
+    build: .
+    entrypoint: ["grid_stability"]
+
+  viral-campaign:
+    build: .
+    entrypoint: ["viral_campaign"]
