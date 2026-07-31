@@ -1,44 +1,48 @@
-use agent_core::{Agent, AgentConfig, BaseAgentState, PopulationManager};
-use math_core::calculate_alignment_score;
+use adaptive_agent_framework::{
+    calculate_alignment_score, Agent, AgentConfig, BinarySerializer, PopulationManager,
+    SimulationConfig,
+};
+use config_layer::EngineConfig;
 use rand::Rng;
-use serde::Serialize;
-use std::fs::{File, OpenOptions};
+use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::thread;
 use std::time::Duration;
 
-#[derive(Serialize)]
-struct SimulationReport {
-    domain: String,
-    total_ticks: u64,
-    final_alignment: f64,
-    resonance_hits: u64,
-    hit_rate_percent: f64,
-    metrics: AlignmentMetrics,
-    population_stats: PopulationStats,
-}
-
-#[derive(Serialize)]
-struct AlignmentMetrics {
-    mae: f64,
-    rmse: f64,
-    min_alignment: f64,
-    max_alignment: f64,
-}
-
-#[derive(Serialize)]
-struct PopulationStats {
-    final_count: usize,
+#[derive(Serialize, Deserialize)]
+struct ViralState {
+    tick: u64,
+    base_target: f64,
+    inertia: f64,
+    alignment: f64,
+    hits: u64,
+    total_reward: f64,
     total_spawned: usize,
-    avg_learning_rate: f64,
-    min_learning_rate: f64,
-    max_learning_rate: f64,
 }
 
+impl Default for ViralState {
+    fn default() -> Self {
+        Self {
+            tick: 0,
+            base_target: 0.5,
+            inertia: 0.1,
+            alignment: 0.0,
+            hits: 0,
+            total_reward: 0.0,
+            total_spawned: 5,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 struct ContentChannel {
     id: String,
     style: f64,
-    base: BaseAgentState,
+    energy: f64,
+    reward: f64,
+    birth_tick: u32,
+    learning_rate: f64,
 }
 
 impl ContentChannel {
@@ -47,7 +51,10 @@ impl ContentChannel {
         Self {
             id: id.to_string(),
             style: rng.gen_range(0.0..std::f64::consts::TAU),
-            base: BaseAgentState::new(tick, 0.8 + rng.gen_range(0.0..0.4)),
+            energy: 1.0,
+            reward: 0.0,
+            birth_tick: tick,
+            learning_rate: 0.8 + rng.gen_range(0.0..0.4),
         }
     }
 }
@@ -55,41 +62,43 @@ impl ContentChannel {
 impl Agent for ContentChannel {
     fn process_tick(&mut self, setpoint: f64, inertia: f64) -> f64 {
         let impact = (self.style.sin() + 1.0) / 2.0;
-        let _error = self.base.apply_feedback(impact, setpoint, inertia);
-
-        let style_correction = (setpoint - impact) * self.base.learning_rate * 0.15;
+        let error = (impact - setpoint).abs();
+        self.energy = (self.energy - error.powi(2) * inertia * 0.01).max(0.0);
+        if error < 0.3 {
+            self.energy = (self.energy + 0.03).min(1.5);
+            self.reward += 0.1;
+        }
+        let style_correction = (setpoint - impact) * self.learning_rate * 0.15;
         let noise = (rand::thread_rng().gen::<f64>() - 0.5) * 0.03;
         self.style += style_correction + noise;
         self.style = self.style.rem_euclid(std::f64::consts::TAU);
-
         impact
     }
-
     fn get_energy(&self) -> f64 {
-        self.base.energy
+        self.energy
     }
     fn get_reward(&self) -> f64 {
-        self.base.reward
+        self.reward
     }
     fn get_label(&self) -> &str {
         &self.id
     }
     fn get_birth_tick(&self) -> u32 {
-        self.base.birth_tick
+        self.birth_tick
     }
-
     fn mutate(&mut self) {
         use rand::Rng;
-        self.base.learning_rate =
-            (self.base.learning_rate + rand::thread_rng().gen_range(-0.2..0.2)).clamp(0.1, 3.0);
-        self.base.mutate_energy_and_reward();
+        self.learning_rate =
+            (self.learning_rate + rand::thread_rng().gen_range(-0.2..0.2)).clamp(0.1, 3.0);
+        self.energy *= 0.7;
+        self.reward *= 0.5;
     }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn save_state(&self) -> Option<Vec<u8>> {
+        bincode::serialize(self).ok()
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_dashboard(
     tick: u64,
     target: f64,
@@ -98,7 +107,7 @@ fn draw_dashboard(
     pop: usize,
     hits: u64,
     reward: f64,
-    channels: &[&ContentChannel],
+    agents: &[Box<dyn Agent>],
     log_file: &mut std::fs::File,
     last_lines: &mut usize,
     event: &str,
@@ -107,169 +116,159 @@ fn draw_dashboard(
         print!("\x1B[{}A", *last_lines);
     }
     print!("\x1B[J");
-
-    println!("=== VIRAL CAMPAIGN MONITOR (REALISTIC) ===");
+    println!("=== VIRAL CAMPAIGN MONITOR ===");
     println!(
         "Tick: {:<6} | Target: {:.3} | Align: {:.3} | Inertia: {:.3} | Pop: {:>2} | Hits: {:>4} | {}",
         tick, target, alignment, inertia, pop, hits, event
     );
     println!("----------------------------------------------------------------------");
-
-    for channel in channels {
-        let status = if channel.base.energy > 0.8 {
+    for agent in agents {
+        let energy = agent.get_energy();
+        let status = if energy > 0.8 {
             "\x1B[32mTRENDING\x1B[0m"
-        } else if channel.base.energy > 0.3 {
+        } else if energy > 0.3 {
             "\x1B[33mACTIVE  \x1B[0m"
         } else {
             "\x1B[31mDYING   \x1B[0m"
         };
-
-        let bar_width = ((channel.base.energy * 20.0) as usize).min(20);
+        let bar_width = ((energy * 20.0) as usize).min(20);
         let bar: String = "█".repeat(bar_width) + &"░".repeat(20 - bar_width);
-
-        let style_label = if channel.style < 1.0 {
-            "SERIOUS"
-        } else if channel.style < 2.0 {
-            "MIXED  "
-        } else {
-            "FUN    "
-        };
-
         println!(
-            "[{:10}] Energy: {:4.2} | LR: {:4.2} | Style: {:4.2} ({}) | {} {}",
-            channel.id,
-            channel.base.energy,
-            channel.base.learning_rate,
-            channel.style,
-            style_label,
+            "[{:10}] Energy: {:4.2} | Reward: {:5.2} | {} {}",
+            agent.get_label(),
+            energy,
+            agent.get_reward(),
             status,
             bar
         );
     }
-
     let _ = writeln!(
         log_file,
         "{},{:.4},{:.4},{:.4},{},{},{:.4},{}",
         tick, target, alignment, inertia, pop, hits, reward, event
     );
-
-    *last_lines = 3 + channels.len();
+    *last_lines = 3 + agents.len();
     io::stdout().flush().unwrap();
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let engine_config = EngineConfig::load("config.toml").unwrap_or_else(|_| {
+        println!("[!] config.toml not found, using default config.");
+        EngineConfig::default_config()
+    });
+
+    let sim_config = SimulationConfig::load("config.toml")
+        .unwrap_or_else(|_| SimulationConfig::default_config());
+
+    let pop_config = AgentConfig::builder()
+        .max_population(sim_config.max_population)
+        .homeostasis_threshold(sim_config.homeostasis_threshold)
+        .min_energy(sim_config.min_energy)
+        .immunity_period(sim_config.immunity_period)
+        .build();
+
+    let mut manager = PopulationManager::builder().config(pop_config).build();
+
+    let mut state = ViralState {
+        base_target: sim_config.initial_setpoint,
+        inertia: sim_config.initial_inertia,
+        ..Default::default()
+    };
+
+    let checkpoint_file = "examples/viral_checkpoint.bin";
+    if let Ok(loaded) = BinarySerializer::load::<ViralState>(checkpoint_file) {
+        println!("[+] Checkpoint loaded (tick {})", loaded.tick);
+        state = loaded;
+    } else {
+        println!("[!] Checkpoint not found, starting from scratch.");
+        let channel_names = ["TikTok", "Instagram", "Twitter", "YouTube", "LinkedIn"];
+        for (i, name) in channel_names.iter().enumerate() {
+            manager.add_agent(Box::new(ContentChannel::new(name, i as u32)));
+        }
+    }
+
     let log_path = "examples/viral_campaign.log";
     let mut log_file = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open(log_path)
-        .expect("Не удалось создать лог");
+        .expect("Failed to create log file");
     let _ = writeln!(
         log_file,
         "tick,target,alignment,inertia,population,hits,reward,event"
     );
 
-    let pop_config = AgentConfig::default();
-    let mut manager = PopulationManager::new(pop_config);
-
-    let channel_names = ["TikTok", "Instagram", "Twitter", "YouTube", "LinkedIn"];
-    for (i, name) in channel_names.iter().enumerate() {
-        manager.add_agent(Box::new(ContentChannel::new(name, i as u32)));
-    }
-
-    let mut tick: u64 = 0;
-    let base_target: f64 = 0.5;
-    let mut inertia: f64 = 0.1;
-    let mut alignment: f64 = 0.0;
-    let mut hits: u64 = 0;
-    let mut total_reward: f64 = 0.0;
-    let max_ticks: u64 = 10000;
     let mut last_lines = 0;
 
-    let mut min_align = 1.0;
-    let mut max_align = 0.0;
-    let mut total_spawned: usize = 5;
-
-    println!("[!] Viral Campaign Domain запущен (REALISTIC MODE).");
-    println!("Лог: {}", log_path);
+    println!("[!] Viral Campaign Domain started.");
+    println!("Log: {}", log_path);
     println!("----------------------------------------------------------------------");
-
     print!("\x1B[?25l");
     io::stdout().flush().unwrap();
 
     loop {
-        if tick >= max_ticks {
+        if state.tick >= engine_config.max_ticks {
             break;
         }
-        tick += 1;
+        state.tick += 1;
 
-        let daily_cycle = 0.15 * (tick as f64 * 0.026).sin();
-        let mut current_target = base_target + daily_cycle;
+        let daily_cycle = 0.15 * (state.tick as f64 * 0.026).sin();
+        let mut current_target = state.base_target + daily_cycle;
         let mut event = "NORMAL";
 
-        if tick > 0 && tick % 250 == 0 {
+        if state.tick > 0 && state.tick.is_multiple_of(250) {
             let severity = rand::thread_rng().gen::<f64>();
             if severity < 0.6 {
                 current_target = 0.85 + rand::thread_rng().gen::<f64>() * 0.1;
-                event = "VIRAL TREND 🚀";
+                event = "VIRAL TREND";
             } else if severity < 0.9 {
                 current_target = 0.15 + rand::thread_rng().gen::<f64>() * 0.15;
                 event = "ALGORITHM CHANGE";
             } else {
                 current_target = rand::thread_rng().gen_range(0.0..1.0);
-                event = "COMPETITOR ATTACK ⚡";
+                event = "COMPETITOR ATTACK";
             }
         }
 
         let noise = (rand::thread_rng().gen::<f64>() - 0.5) * 0.25;
         current_target = (current_target + noise).clamp(0.05, 0.95);
 
-        let clamped = alignment.clamp(0.0, 1.0);
-        inertia += ((1.05 - clamped).powi(2) - inertia) * 0.5;
-        inertia = inertia.clamp(0.01, 2.0);
+        let clamped = state.alignment.clamp(0.0, 1.0);
+        state.inertia += ((1.05 - clamped).powi(2) - state.inertia) * 0.5;
+        state.inertia = state.inertia.clamp(0.01, 2.0);
 
-        let impacts = manager.process_all_agents_parallel(current_target, inertia);
-        alignment = calculate_alignment_score(&impacts, current_target);
-
-        if alignment < min_align {
-            min_align = alignment;
-        }
-        if alignment > max_align {
-            max_align = alignment;
-        }
+        let impacts = manager.process_all_agents_parallel(current_target, state.inertia);
+        state.alignment = calculate_alignment_score(&impacts, current_target);
 
         thread::sleep(Duration::from_millis(10));
 
-        if alignment > 0.85 {
-            hits += 1;
-            total_reward += 0.001;
+        if state.alignment > 0.85 {
+            state.hits += 1;
+            state.total_reward += 0.001;
         }
 
-        manager.run_evolution(tick as u32);
-        if manager.needs_homeostasis() {
+        manager.run_evolution(state.tick as u32);
+
+        while manager.needs_homeostasis() && manager.len() < sim_config.max_population {
+            state.total_spawned += 1;
             manager.add_agent(Box::new(ContentChannel::new(
-                &format!("Channel-{}", tick),
-                tick as u32,
+                &format!("Channel-{}", state.total_spawned),
+                state.tick as u32,
             )));
-            total_spawned += 1;
         }
 
-        if tick % 100 == 0 {
-            let channels: Vec<&ContentChannel> = manager
-                .agents
-                .iter()
-                .map(|a| a.as_any().downcast_ref::<ContentChannel>().unwrap())
-                .collect();
+        if state.tick.is_multiple_of(engine_config.snapshot_interval) {
+            let _ = BinarySerializer::save(checkpoint_file, &state);
             draw_dashboard(
-                tick,
+                state.tick,
                 current_target,
-                alignment,
-                inertia,
+                state.alignment,
+                state.inertia,
                 manager.len(),
-                hits,
-                total_reward,
-                &channels,
+                state.hits,
+                state.total_reward,
+                &manager.agents,
                 &mut log_file,
                 &mut last_lines,
                 event,
@@ -277,63 +276,15 @@ fn main() {
         }
     }
 
-    let mae = (1.0 - alignment).abs();
-    let rmse = ((1.0 - alignment).powi(2)).sqrt();
-
-    let mut total_lr = 0.0;
-    let mut min_lr = f64::MAX;
-    let mut max_lr = f64::MIN;
-
-    for agent in &manager.agents {
-        if let Some(ch) = agent.as_any().downcast_ref::<ContentChannel>() {
-            let lr = ch.base.learning_rate;
-            total_lr += lr;
-            if lr < min_lr {
-                min_lr = lr;
-            }
-            if lr > max_lr {
-                max_lr = lr;
-            }
-        }
-    }
-
-    let pop_count = manager.len();
-    let avg_lr = if pop_count > 0 {
-        total_lr / pop_count as f64
-    } else {
-        0.0
-    };
-
-    let report = SimulationReport {
-        domain: "Viral Campaign".to_string(),
-        total_ticks: tick,
-        final_alignment: alignment,
-        resonance_hits: hits,
-        hit_rate_percent: (hits as f64 / tick as f64) * 100.0,
-        metrics: AlignmentMetrics {
-            mae,
-            rmse,
-            min_alignment: min_align,
-            max_alignment: max_align,
-        },
-        population_stats: PopulationStats {
-            final_count: pop_count,
-            total_spawned,
-            avg_learning_rate: avg_lr,
-            min_learning_rate: min_lr,
-            max_learning_rate: max_lr,
-        },
-    };
-
-    let report_path = "examples/analysis_report_viral.json";
-    let file = File::create(report_path).expect("Не удалось создать файл отчета");
-    serde_json::to_writer_pretty(file, &report).expect("Не удалось записать JSON");
-
+    let _ = BinarySerializer::save(checkpoint_file, &state);
     print!("\x1B[?25h");
-    println!("\n[✓] Кампания завершена.");
+    println!("\n[✓] Campaign completed.");
     println!(
-        "Тиков: {} | Hits: {} | Финальный alignment: {:.3}",
-        tick, hits, alignment
+        "Ticks: {} | Hits: {} | Final alignment: {:.3}",
+        state.tick, state.hits, state.alignment
     );
-    println!("[+] Аналитический отчет сохранен: {}", report_path);
+    println!("\nTo generate charts, run:");
+    println!("python tools/visualize.py {}", log_path);
+
+    Ok(())
 }

@@ -1,10 +1,27 @@
-version: "3.8"
-
 services:
   grid-stability:
     build: .
     entrypoint: ["grid_stability"]
+    volumes:
+      - aaf_data:/app/examples
+    environment:
+      - RUST_LOG=info
 
   viral-campaign:
     build: .
     entrypoint: ["viral_campaign"]
+    volumes:
+      - aaf_data:/app/examples
+    environment:
+      - RUST_LOG=info
+
+  swarm-management:
+    build: .
+    entrypoint: ["swarm_management"]
+    volumes:
+      - aaf_data:/app/examples
+    environment:
+      - RUST_LOG=info
+
+volumes:
+  aaf_data:

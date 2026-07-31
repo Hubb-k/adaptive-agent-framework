@@ -42,7 +42,7 @@ pub trait Agent: Send {
     fn get_label(&self) -> &str;
     fn get_birth_tick(&self) -> u32;
     fn mutate(&mut self);
-    fn as_any(&self) -> &dyn std::any::Any;
+    fn save_state(&self) -> Option<Vec<u8>>;
 }
 
 #[derive(Debug, Clone)]
@@ -54,15 +54,62 @@ pub struct AgentConfig {
     pub immunity_period: u32,
 }
 
-impl Default for AgentConfig {
+impl AgentConfig {
+    pub fn builder() -> AgentConfigBuilder {
+        AgentConfigBuilder::new()
+    }
+}
+
+pub struct AgentConfigBuilder {
+    config: AgentConfig,
+}
+
+impl Default for AgentConfigBuilder {
     fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AgentConfigBuilder {
+    pub fn new() -> Self {
         Self {
-            max_population: 25,
-            homeostasis_threshold: 10,
-            emergency_threshold: 5,
-            min_energy: 0.01,
-            immunity_period: 10_000,
+            config: AgentConfig {
+                max_population: 25,
+                homeostasis_threshold: 10,
+                emergency_threshold: 5,
+                min_energy: 0.01,
+                immunity_period: 500,
+            },
         }
+    }
+
+    pub fn max_population(mut self, value: usize) -> Self {
+        self.config.max_population = value;
+        self
+    }
+
+    pub fn homeostasis_threshold(mut self, value: usize) -> Self {
+        self.config.homeostasis_threshold = value;
+        self
+    }
+
+    pub fn emergency_threshold(mut self, value: usize) -> Self {
+        self.config.emergency_threshold = value;
+        self
+    }
+
+    pub fn min_energy(mut self, value: f64) -> Self {
+        self.config.min_energy = value;
+        self
+    }
+
+    pub fn immunity_period(mut self, value: u32) -> Self {
+        self.config.immunity_period = value;
+        self
+    }
+
+    pub fn build(self) -> AgentConfig {
+        self.config
     }
 }
 
@@ -72,11 +119,8 @@ pub struct PopulationManager {
 }
 
 impl PopulationManager {
-    pub fn new(config: AgentConfig) -> Self {
-        Self {
-            agents: Vec::new(),
-            config,
-        }
+    pub fn builder() -> PopulationManagerBuilder {
+        PopulationManagerBuilder::new()
     }
 
     pub fn add_agent(&mut self, agent: Box<dyn Agent>) {
@@ -108,6 +152,7 @@ impl PopulationManager {
             a.get_energy() > self.config.min_energy || age < self.config.immunity_period
         });
     }
+
     pub fn process_all_agents_parallel(&mut self, setpoint: f64, inertia: f64) -> Vec<f64> {
         self.agents
             .par_iter_mut()
@@ -125,6 +170,61 @@ impl PopulationManager {
 
     pub fn is_empty(&self) -> bool {
         self.agents.is_empty()
+    }
+}
+
+pub struct PopulationManagerBuilder {
+    config: AgentConfig,
+}
+
+impl Default for PopulationManagerBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PopulationManagerBuilder {
+    pub fn new() -> Self {
+        Self {
+            config: AgentConfig::builder().build(),
+        }
+    }
+
+    pub fn config(mut self, config: AgentConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    pub fn max_population(mut self, value: usize) -> Self {
+        self.config.max_population = value;
+        self
+    }
+
+    pub fn homeostasis_threshold(mut self, value: usize) -> Self {
+        self.config.homeostasis_threshold = value;
+        self
+    }
+
+    pub fn emergency_threshold(mut self, value: usize) -> Self {
+        self.config.emergency_threshold = value;
+        self
+    }
+
+    pub fn min_energy(mut self, value: f64) -> Self {
+        self.config.min_energy = value;
+        self
+    }
+
+    pub fn immunity_period(mut self, value: u32) -> Self {
+        self.config.immunity_period = value;
+        self
+    }
+
+    pub fn build(self) -> PopulationManager {
+        PopulationManager {
+            agents: Vec::new(),
+            config: self.config,
+        }
     }
 }
 
@@ -157,15 +257,16 @@ mod tests {
             self.label = format!("{}_MUT", self.label);
             self.base.mutate_energy_and_reward();
         }
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
+        fn save_state(&self) -> Option<Vec<u8>> {
+            None
         }
     }
 
     #[test]
     fn test_evolution_removes_dead_agents() {
-        let config = AgentConfig::default();
-        let mut manager = PopulationManager::new(config);
+        let config = AgentConfig::builder().immunity_period(100).build();
+        let mut manager = PopulationManager::builder().config(config).build();
+
         manager.add_agent(Box::new(DummyAgent {
             base: BaseAgentState {
                 energy: 0.005,
@@ -192,8 +293,9 @@ mod tests {
 
     #[test]
     fn test_immunity_period() {
-        let config = AgentConfig::default();
-        let mut manager = PopulationManager::new(config);
+        let config = AgentConfig::builder().immunity_period(10000).build();
+        let mut manager = PopulationManager::builder().config(config).build();
+
         manager.add_agent(Box::new(DummyAgent {
             base: BaseAgentState {
                 energy: 0.005,
@@ -210,8 +312,7 @@ mod tests {
 
     #[test]
     fn test_parallel_processing() {
-        let config = AgentConfig::default();
-        let mut manager = PopulationManager::new(config);
+        let mut manager = PopulationManager::builder().build();
 
         for i in 0..100 {
             manager.add_agent(Box::new(DummyAgent {

@@ -1,5 +1,13 @@
-initial_setpoint = 0.5
-initial_inertia = 0.1
+# Параметры движка
 max_ticks = 10000
 snapshot_interval = 1000
-state_file = "state.bin"
+state_file = "checkpoint.bin"
+parallel = true
+
+# Параметры симуляции (домена)
+initial_setpoint = 0.5
+initial_inertia = 0.1
+max_population = 25
+homeostasis_threshold = 10
+min_energy = 0.01
+immunity_period = 500

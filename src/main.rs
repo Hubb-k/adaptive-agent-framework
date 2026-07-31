@@ -1,33 +1,74 @@
-use agent_core::{Agent, AgentConfig, PopulationManager};
+use adaptive_agent_framework::{
+    calculate_alignment_score, Agent, AgentConfig, BinarySerializer, PopulationManager,
+    SimulationConfig,
+};
 use config_layer::EngineConfig;
-use math_core::calculate_alignment_score;
-use state_store::{AgentRecord, BinarySerializer, GlobalState};
+use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::thread;
 use std::time::Duration;
 
+#[derive(Serialize, Deserialize)]
+struct SimState {
+    tick: u64,
+    global_setpoint: f64,
+    system_inertia: f64,
+    alignment_score: f64,
+    complexity_factor: f64,
+    accumulated_reward: f64,
+    success_count: u64,
+}
+
+impl Default for SimState {
+    fn default() -> Self {
+        Self {
+            tick: 0,
+            global_setpoint: 0.5,
+            system_inertia: 0.1,
+            alignment_score: 0.0,
+            complexity_factor: 1.0,
+            accumulated_reward: 0.0,
+            success_count: 0,
+        }
+    }
+}
+
 type AgentFactory = Box<dyn Fn(u32) -> Box<dyn Agent>>;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = EngineConfig::load("config.toml").unwrap_or_else(|_| {
+    let engine_config = EngineConfig::load("config.toml").unwrap_or_else(|_| {
         println!("[!] config.toml не найден, использую дефолтный конфиг.");
         EngineConfig::default_config()
     });
 
-    let pop_config = AgentConfig::default();
-    let mut manager = PopulationManager::new(pop_config);
+    let sim_config = SimulationConfig::load("config.toml")
+        .unwrap_or_else(|_| SimulationConfig::default_config());
+
+    let pop_config = AgentConfig::builder()
+        .max_population(sim_config.max_population)
+        .homeostasis_threshold(sim_config.homeostasis_threshold)
+        .min_energy(sim_config.min_energy)
+        .immunity_period(sim_config.immunity_period)
+        .build();
+
+    let mut manager = PopulationManager::builder().config(pop_config).build();
     let factory: AgentFactory = Box::new(|tick: u32| Box::new(SimpleAgent::new(tick)));
 
-    let mut state = GlobalState {
-        tick: 0,
-        global_setpoint: config.initial_setpoint,
-        system_inertia: config.initial_inertia,
+    let mut state = SimState {
+        global_setpoint: sim_config.initial_setpoint,
+        system_inertia: sim_config.initial_inertia,
         ..Default::default()
     };
 
-    for i in 0..5 {
-        manager.add_agent(factory(i));
+    if let Ok(loaded) = BinarySerializer::load::<SimState>(&engine_config.state_file) {
+        println!("[+] Загружен чекпоинт (тик {})", loaded.tick);
+        state = loaded;
+    } else {
+        println!("[!] Чекпоинт не найден, начинаем с нуля.");
+        for i in 0..5 {
+            manager.add_agent(factory(i));
+        }
     }
 
     let log_path = "core_simulation.log";
@@ -42,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[!] Adaptive Agent Framework запущен.");
     println!(
         "Setpoint: {:.2} | Inertia: {:.2} | Max ticks: {}",
-        state.global_setpoint, state.system_inertia, config.max_ticks
+        state.global_setpoint, state.system_inertia, engine_config.max_ticks
     );
     println!("----------------------------------------------------------------------");
 
@@ -52,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut last_lines = 0;
 
     loop {
-        if state.tick >= config.max_ticks {
+        if state.tick >= engine_config.max_ticks {
             break;
         }
         state.tick += 1;
@@ -61,10 +102,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let target_inertia = (1.05 - clamped_alignment).powi(2);
         state.system_inertia += (target_inertia - state.system_inertia) * 0.1;
 
-        let mut impacts = Vec::with_capacity(manager.len());
-        for agent in &mut manager.agents {
-            impacts.push(agent.process_tick(state.global_setpoint, state.system_inertia));
-        }
+        let impacts =
+            manager.process_all_agents_parallel(state.global_setpoint, state.system_inertia);
         state.alignment_score = calculate_alignment_score(&impacts, state.global_setpoint);
 
         let delay = ((state.system_inertia + 0.1) * (state.tick as f64).ln_1p())
@@ -82,21 +121,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             manager.add_agent(factory(state.tick as u32));
         }
 
-        if state.tick.is_multiple_of(config.snapshot_interval) {
-            let serialized_agents: Vec<AgentRecord> = manager
-                .agents
-                .iter()
-                .map(|a| AgentRecord {
-                    global_setpoint: state.global_setpoint,
-                    learning_rate: 1.0,
-                    energy: a.get_energy(),
-                    accumulated_reward: a.get_reward(),
-                    birth_tick: a.get_birth_tick(),
-                    label: a.get_label().to_string(),
-                })
-                .collect();
-
-            let _ = BinarySerializer::save(&config.state_file, &state, &serialized_agents);
+        if state.tick.is_multiple_of(engine_config.snapshot_interval) {
+            let _ = BinarySerializer::save(&engine_config.state_file, &state);
 
             if last_lines > 0 {
                 print!("\x1B[{}A", last_lines);
@@ -124,6 +150,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let _ = BinarySerializer::save(&engine_config.state_file, &state);
+
     print!("\x1B[?25h");
     println!("\n[✓] Симуляция завершена. Лог: {}", log_path);
     println!(
@@ -133,6 +161,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[derive(Serialize, Deserialize)]
 struct SimpleAgent {
     energy: f64,
     reward: f64,
@@ -190,7 +219,7 @@ impl Agent for SimpleAgent {
         self.energy *= 0.7;
         self.reward *= 0.5;
     }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn save_state(&self) -> Option<Vec<u8>> {
+        bincode::serialize(self).ok()
     }
 }
