@@ -76,7 +76,7 @@ fn setup_population(size: usize) -> PopulationManager {
         .min_energy(0.01)
         .immunity_period(100)
         .build();
-    
+
     let mut manager = PopulationManager::builder().config(config).build();
     for i in 0..size {
         manager.add_agent(Box::new(BenchmarkAgent::new(i as u32)));
@@ -102,9 +102,7 @@ fn benchmark_parallel(c: &mut Criterion) {
     let size = 10_000;
     let mut manager = setup_population(size);
     c.bench_function(&format!("parallel_{}k_agents", size / 1000), |b| {
-        b.iter(|| {
-            manager.process_all_agents_parallel(black_box(0.5), black_box(0.1))
-        })
+        b.iter(|| manager.process_all_agents_parallel(black_box(0.5), black_box(0.1)))
     });
 }
 

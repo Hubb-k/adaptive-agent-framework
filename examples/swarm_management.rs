@@ -215,7 +215,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         state.tick += 1;
 
         let demand_cycle = 5.0 + 3.0 * (state.tick as f64 * 0.01).sin();
-        state.total_demand = (demand_cycle + (rand::thread_rng().gen::<f64>() - 0.5) * 1.5).max(1.0);
+        state.total_demand =
+            (demand_cycle + (rand::thread_rng().gen::<f64>() - 0.5) * 1.5).max(1.0);
 
         let pop = manager.len().max(1);
         let current_setpoint = state.total_demand / pop as f64;
@@ -229,7 +230,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             event = "HARDWARE FAILURE";
         }
 
-        if state.tick > 0 && state.tick.is_multiple_of(1000) && manager.len() < sim_config.max_population {
+        if state.tick > 0
+            && state.tick.is_multiple_of(1000)
+            && manager.len() < sim_config.max_population
+        {
             let new_units = 2;
             for _ in 0..new_units {
                 state.total_spawned += 1;
@@ -280,7 +284,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Ticks: {} | Hits: {} | Final alignment: {:.3}",
         state.tick, state.hits, state.alignment
     );
-    println!("Total units spawned: {}, Total lost: {}", state.total_spawned, state.total_lost);
+    println!(
+        "Total units spawned: {}, Total lost: {}",
+        state.total_spawned, state.total_lost
+    );
     println!("\nTo generate charts, run:");
     println!("python tools/visualize.py {}", log_path);
 
