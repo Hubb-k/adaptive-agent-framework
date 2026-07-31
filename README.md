@@ -10,7 +10,8 @@
   </a>
   <img src="https://img.shields.io/badge/rust-1.85%2B-orange" alt="Rust Version">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
-  <img src="https://img.shields.io/badge/status-work_in_progress-yellow" alt="Status">
+  <img src="https://img.shields.io/badge/docker-ready-blue" alt="Docker Support">
+  <img src="https://img.shields.io/badge/python-3.8+-blue" alt="Python Version">
 </p>
 
 > **Status: Work in Progress.** This project is under active development and is not yet suitable for production use. The core API is stabilizing, integrations are being developed, and breaking changes may occur.
